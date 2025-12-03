@@ -72,24 +72,28 @@ app.post('/api/chat/grok', async (req, res) => {
 app.post('/api/chat/gemini', async (req, res) => {
   try {
     const { message, systemPrompt } = req.body;
-    
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: systemPrompt ? `${systemPrompt}\n\n${message}` : message }] }],
+        contents: [{
+          parts: [{
+            text: message
+          }]
+        }]
       }),
     });
-    
+
     const data = await response.json();
     console.log('Gemini API response:', JSON.stringify(data));
-    
+
     if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
       res.json({ success: true, response: data.candidates[0].content.parts[0].text, ai: 'gemini' });
     } else if (data.error) {
-      res.json({ success: true, response: `Gemini API error: ${data.error.message || JSON.stringify(data.error)}`, ai: 'gemini' });
+      res.json({ success: true, response: `Gemini API error: ${data.error.message}`, ai: 'gemini' });
     } else {
       res.json({ success: true, response: 'Gemini returned an unexpected response format.', ai: 'gemini' });
     }
@@ -98,7 +102,6 @@ app.post('/api/chat/gemini', async (req, res) => {
     res.json({ success: true, response: `Gemini error: ${error.message}`, ai: 'gemini' });
   }
 });
-
 // Legacy endpoint (defaults to Claude)
 app.post('/api/chat', async (req, res) => {
   try {
