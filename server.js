@@ -44,7 +44,7 @@ app.post('/api/chat/grok', async (req, res) => {
         'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-beta',
+        model: 'grok-3',
         messages: [
           { role: 'system', content: systemPrompt || 'You are Grok, a witty AI assistant.' },
           { role: 'user', content: message }
@@ -73,7 +73,7 @@ app.post('/api/chat/gemini', async (req, res) => {
   try {
     const { message, systemPrompt } = req.body;
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
