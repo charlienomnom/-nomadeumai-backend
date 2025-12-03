@@ -53,10 +53,18 @@ app.post('/api/chat/grok', async (req, res) => {
     });
     
     const data = await response.json();
-    res.json({ success: true, response: data.choices[0].message.content, ai: 'grok' });
+    console.log('Grok API response:', JSON.stringify(data));
+    
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      res.json({ success: true, response: data.choices[0].message.content, ai: 'grok' });
+    } else if (data.error) {
+      res.json({ success: true, response: `Grok API error: ${data.error.message || JSON.stringify(data.error)}`, ai: 'grok' });
+    } else {
+      res.json({ success: true, response: 'Grok returned an unexpected response format.', ai: 'grok' });
+    }
   } catch (error) {
     console.error('Grok Error:', error);
-    res.status(500).json({ success: false, error: error.message, ai: 'grok' });
+    res.json({ success: true, response: `Grok error: ${error.message}`, ai: 'grok' });
   }
 });
 
@@ -65,7 +73,7 @@ app.post('/api/chat/gemini', async (req, res) => {
   try {
     const { message, systemPrompt } = req.body;
     
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -76,10 +84,18 @@ app.post('/api/chat/gemini', async (req, res) => {
     });
     
     const data = await response.json();
-    res.json({ success: true, response: data.candidates[0].content.parts[0].text, ai: 'gemini' });
+    console.log('Gemini API response:', JSON.stringify(data));
+    
+    if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
+      res.json({ success: true, response: data.candidates[0].content.parts[0].text, ai: 'gemini' });
+    } else if (data.error) {
+      res.json({ success: true, response: `Gemini API error: ${data.error.message || JSON.stringify(data.error)}`, ai: 'gemini' });
+    } else {
+      res.json({ success: true, response: 'Gemini returned an unexpected response format.', ai: 'gemini' });
+    }
   } catch (error) {
     console.error('Gemini Error:', error);
-    res.status(500).json({ success: false, error: error.message, ai: 'gemini' });
+    res.json({ success: true, response: `Gemini error: ${error.message}`, ai: 'gemini' });
   }
 });
 
