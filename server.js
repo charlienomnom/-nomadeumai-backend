@@ -41,20 +41,28 @@ const messages = [
 // Grok endpoint
 app.post('/api/chat/grok', async (req, res) => {
   try {
-    const { message, systemPrompt } = req.body;
-    
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'grok-3',
-        messages: [
-          { role: 'system', content: systemPrompt || 'You are Grok, a witty AI assistant.' },
-          { role: 'user', content: message }
-        ],
+    const { message, systemPrompt, conversationHistory } = req.body;
+
+const messages = [
+  { role: 'system', content: systemPrompt || 'You are Grok, a witty AI assistant.' },
+  ...(conversationHistory || []).map(msg => ({
+    role: msg.role === 'assistant' ? 'assistant' : 'user',
+    content: msg.content
+  })),
+  { role: 'user', content: message }
+];
+
+const response = await fetch('https://api.x.ai/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
+  },
+  body: JSON.stringify({
+    model: 'grok-3',
+    messages: messages,
+  }),
+});
       }),
     });
     
