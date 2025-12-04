@@ -15,8 +15,14 @@ const anthropic = new Anthropic({
 // Claude endpoint
 app.post('/api/chat/claude', async (req, res) => {
   try {
-    const { message, systemPrompt } = req.body;
-    const messages = [{ role: 'user', content: message }];
+    const { message, systemPrompt, conversationHistory } = req.body;
+const messages = [
+  ...(conversationHistory || []).map(msg => ({
+    role: msg.role === 'assistant' ? 'assistant' : 'user',
+    content: msg.content
+  })),
+  { role: 'user', content: message }
+];
     
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
