@@ -85,19 +85,29 @@ const response = await fetch('https://api.x.ai/v1/chat/completions', {
 // Gemini endpoint
 app.post('/api/chat/gemini', async (req, res) => {
   try {
-    const { message, systemPrompt } = req.body;
+    const { message, systemPrompt, conversationHistory } = req.body;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: message
-          }]
-        }]
+// Build conversation history for Gemini
+const contents = [
+  ...(conversationHistory || []).map(msg => ({
+    parts: [{ text: msg.content }],
+    role: msg.role === 'assistant' ? 'model' : 'user'
+  })),
+  {
+    parts: [{ text: message }],
+    role: 'user'
+  }
+];
+
+const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    contents: contents,
+  }),
+});
       }),
     });
 
