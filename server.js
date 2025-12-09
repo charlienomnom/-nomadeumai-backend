@@ -64,7 +64,7 @@ const response = await fetch('https://api.x.ai/v1/chat/completions', {
   }),
 });
       
-    });
+ 
     
     const data = await response.json();
     console.log('Grok API response:', JSON.stringify(data));
