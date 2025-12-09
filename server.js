@@ -63,7 +63,7 @@ const response = await fetch('https://api.x.ai/v1/chat/completions', {
     messages: messages,
   }),
 });
-      }),
+      
     });
     
     const data = await response.json();
