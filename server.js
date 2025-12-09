@@ -16,21 +16,21 @@ const anthropic = new Anthropic({
 app.post('/api/chat/claude', async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
-const messages = [
-  ...(conversationHistory || []).map(msg => ({
-    role: msg.role === 'assistant' ? 'assistant' : 'user',
-    content: msg.content
-  })),
-  { role: 'user', content: message }
-];
-    
+    const messages = [
+      ...(conversationHistory || []).map(msg => ({
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
+        content: msg.content
+      })),
+      { role: 'user', content: message }
+    ];
+
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
       system: systemPrompt || '',
       messages: messages,
     });
-    
+
     res.json({ success: true, response: response.content[0].text, ai: 'claude' });
   } catch (error) {
     console.error('Claude Error:', error);
@@ -85,27 +85,24 @@ app.post('/api/chat/gemini', async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
 
-// Build conversation history for Gemini
-const contents = [
-  ...(conversationHistory || []).map(msg => ({
-    parts: [{ text: msg.content }],
-    role: msg.role === 'assistant' ? 'model' : 'user'
-  })),
-  {
-    parts: [{ text: message }],
-    role: 'user'
-  }
-];
+    const contents = [
+      ...(conversationHistory || []).map(msg => ({
+        parts: [{ text: msg.content }],
+        role: msg.role === 'assistant' ? 'model' : 'user'
+      })),
+      {
+        parts: [{ text: message }],
+        role: 'user'
+      }
+    ];
 
-const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    contents: contents,
-  }),
-});
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: contents,
       }),
     });
 
@@ -124,25 +121,8 @@ const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/m
     res.json({ success: true, response: `Gemini error: ${error.message}`, ai: 'gemini' });
   }
 });
-// Legacy endpoint (defaults to Claude)
-app.post('/api/chat', async (req, res) => {
-  try {
-    const { message } = req.body;
-    
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: message }],
-    });
-    
-    res.json({ success: true, response: response.content[0].text });
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
-  console.log(`NomadeumAI backend running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
