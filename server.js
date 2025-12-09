@@ -61,7 +61,7 @@ const response = await fetch('https://api.x.ai/v1/chat/completions', {
   body: JSON.stringify({
     model: 'grok-3',
     messages: messages,
-  }),
+  })
 });
       
  
