@@ -4,7 +4,10 @@ const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk').default;
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  credentials: false
+}));
 app.use(express.json());
 
 // Initialize Claude
