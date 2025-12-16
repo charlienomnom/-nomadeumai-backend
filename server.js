@@ -2,6 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const Anthropic = require('@anthropic-ai/sdk').default;
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs').promises;
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
 
 const app = express();
 app.use(cors({
@@ -10,23 +15,155 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    const uploadDir = path.join(__dirname, 'uploads');
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (error) {
+      cb(error, null);
+    }
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only images, PDFs, and documents are allowed.'));
+    }
+  }
+});
+
 // Initialize Claude
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-// Claude endpoint
-app.post('/api/chat/claude', async (req, res) => {
+// Helper function to process uploaded files
+async function processFile(file) {
+  const filePath = file.path;
+  const fileExt = path.extname(file.originalname).toLowerCase();
+  
+  try {
+    // Handle images
+    if (['.jpg', '.jpeg', '.png', '.gif'].includes(fileExt)) {
+      const imageBuffer = await fs.readFile(filePath);
+      const base64Image = imageBuffer.toString('base64');
+      const mediaType = file.mimetype;
+      
+      return {
+        type: 'image',
+        data: base64Image,
+        mediaType: mediaType,
+        filename: file.originalname
+      };
+    }
+    
+    // Handle PDFs
+    if (fileExt === '.pdf') {
+      const dataBuffer = await fs.readFile(filePath);
+      const pdfData = await pdfParse(dataBuffer);
+      return {
+        type: 'text',
+        data: pdfData.text,
+        filename: file.originalname
+      };
+    }
+    
+    // Handle Word documents
+    if (['.doc', '.docx'].includes(fileExt)) {
+      const result = await mammoth.extractRawText({ path: filePath });
+      return {
+        type: 'text',
+        data: result.value,
+        filename: file.originalname
+      };
+    }
+    
+    // Handle text files
+    if (fileExt === '.txt') {
+      const textData = await fs.readFile(filePath, 'utf-8');
+      return {
+        type: 'text',
+        data: textData,
+        filename: file.originalname
+      };
+    }
+    
+    return null;
+  } finally {
+    // Clean up uploaded file
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      console.error('Error deleting file:', error);
+    }
+  }
+}
+
+// Claude endpoint with file support
+app.post('/api/chat/claude', upload.array('files', 5), async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
+    const files = req.files || [];
+    
+    // Process uploaded files
+    const processedFiles = await Promise.all(files.map(processFile));
+    
+    // Build messages array
     const messages = [
-      ...(conversationHistory || []).map(msg => ({
+      ...(conversationHistory ? JSON.parse(conversationHistory).map(msg => ({
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content
-      })),
-      { role: 'user', content: message }
+      })) : [])
     ];
-
+    
+    // Build content for current message
+    let content = [];
+    
+    // Add file content first
+    for (const file of processedFiles) {
+      if (file) {
+        if (file.type === 'image') {
+          content.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: file.mediaType,
+              data: file.data
+            }
+          });
+        } else if (file.type === 'text') {
+          content.push({
+            type: 'text',
+            text: `[Content from file: ${file.filename}]\n\n${file.data}\n\n[End of file content]`
+          });
+        }
+      }
+    }
+    
+    // Add user message
+    content.push({
+      type: 'text',
+      text: message
+    });
+    
+    messages.push({ role: 'user', content });
+    
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
@@ -36,24 +173,38 @@ app.post('/api/chat/claude', async (req, res) => {
 
     res.json({ success: true, response: response.content[0].text, ai: 'claude' });
   } catch (error) {
-    console.error('Claude Error:', error);
+    console.error('Claude error:', error);
     res.status(500).json({ success: false, error: error.message, ai: 'claude' });
   }
 });
 
-// Grok endpoint
-app.post('/api/chat/grok', async (req, res) => {
+// Grok endpoint with file support
+app.post('/api/chat/grok', upload.array('files', 5), async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
-
+    const files = req.files || [];
+    
+    // Process uploaded files
+    const processedFiles = await Promise.all(files.map(processFile));
+    
     const messages = [
       { role: 'system', content: systemPrompt || 'You are Grok, a witty AI assistant.' },
-      ...(conversationHistory || []).map(msg => ({
+      ...(conversationHistory ? JSON.parse(conversationHistory).map(msg => ({
         role: msg.role === 'assistant' ? 'assistant' : 'user',
         content: msg.content
-      })),
-      { role: 'user', content: message }
+      })) : [])
     ];
+    
+    // Build message with file content
+    let userMessage = '';
+    for (const file of processedFiles) {
+      if (file && file.type === 'text') {
+        userMessage += `[Content from file: ${file.filename}]\n\n${file.data}\n\n[End of file content]\n\n`;
+      }
+    }
+    userMessage += message;
+    
+    messages.push({ role: 'user', content: userMessage });
 
     const response = await fetch('https://api.x.ai/v1/chat/completions', {
       method: 'POST',
@@ -73,33 +224,47 @@ app.post('/api/chat/grok', async (req, res) => {
     if (data.choices && data.choices[0] && data.choices[0].message) {
       res.json({ success: true, response: data.choices[0].message.content, ai: 'grok' });
     } else if (data.error) {
-      res.json({ success: true, response: `Grok API error: ${data.error.message || JSON.stringify(data.error)}`, ai: 'grok' });
+      res.json({ success: true, response: `Grok API error: ${data.error.message}`, ai: 'grok' });
     } else {
       res.json({ success: true, response: 'Grok returned an unexpected response format.', ai: 'grok' });
     }
   } catch (error) {
-    console.error('Grok Error:', error);
+    console.error('Grok error:', error);
     res.json({ success: true, response: `Grok error: ${error.message}`, ai: 'grok' });
   }
 });
 
-// Gemini endpoint
-app.post('/api/chat/gemini', async (req, res) => {
+// Gemini endpoint with file support
+app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
-
+    const files = req.files || [];
+    
+    // Process uploaded files
+    const processedFiles = await Promise.all(files.map(processFile));
+    
     const contents = [
-      ...(conversationHistory || []).map(msg => ({
+      ...(conversationHistory ? JSON.parse(conversationHistory).map(msg => ({
         parts: [{ text: msg.content }],
         role: msg.role === 'assistant' ? 'model' : 'user'
-      })),
-      {
-        parts: [{ text: message }],
-        role: 'user'
-      }
+      })) : [])
     ];
+    
+    // Build parts for current message
+    let parts = [];
+    for (const file of processedFiles) {
+      if (file && file.type === 'text') {
+        parts.push({ text: `[Content from file: ${file.filename}]\n\n${file.data}\n\n[End of file content]` });
+      }
+    }
+    parts.push({ text: message });
+    
+    contents.push({
+      parts: parts,
+      role: 'user'
+    });
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`, {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -120,7 +285,7 @@ app.post('/api/chat/gemini', async (req, res) => {
       res.json({ success: true, response: 'Gemini returned an unexpected response format.', ai: 'gemini' });
     }
   } catch (error) {
-    console.error('Gemini Error:', error);
+    console.error('Gemini error:', error);
     res.json({ success: true, response: `Gemini error: ${error.message}`, ai: 'gemini' });
   }
 });
@@ -129,3 +294,4 @@ const PORT = process.env.PORT || 8000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
