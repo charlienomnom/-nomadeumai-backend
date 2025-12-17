@@ -5,6 +5,7 @@ const Anthropic = require('@anthropic-ai/sdk').default;
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 
@@ -18,16 +19,15 @@ app.use(cors({
 
 app.use(express.json());
 
-// Configure multer for file uploads
+// Configure multer for file uploads - FIXED: use synchronous fs for multer callbacks
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fsSync.existsSync(uploadDir)) {
+  fsSync.mkdirSync(uploadDir, { recursive: true });
+}
+
 const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    const uploadDir = path.join(__dirname, 'uploads');
-    try {
-      await fs.mkdir(uploadDir, { recursive: true });
-      cb(null, uploadDir);
-    } catch (error) {
-      cb(error, null);
-    }
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -294,6 +294,6 @@ app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });
