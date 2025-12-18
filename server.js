@@ -321,7 +321,8 @@ app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
     const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+      // FIXED: Changed from gemini-2.5-flash to gemini-1.5-flash (correct model name)
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
