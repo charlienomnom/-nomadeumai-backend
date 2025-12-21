@@ -13,7 +13,7 @@ async function initializePinecone() {
       apiKey: process.env.PINECONE_API_KEY,
     });
     
-    pineconeIndex = pineconeClient.index(process.env.PINECONE_INDEX_NAME, process.env.PINECONE_INDEX_HOST);
+    pineconeIndex = pineconeClient.index(process.env.PINECONE_INDEX_NAME);
     console.log('✅ Pinecone initialized successfully');
   }
   return pineconeIndex;
@@ -41,19 +41,21 @@ function chunkText(text, maxChunkSize = 400) {
   return chunks;
 }
 
-// Generate embeddings using Pinecone's inference API (multilingual-e5-large)
+// Generate embeddings using Pinecone's inference API
 async function generateEmbedding(text) {
   try {
-    const index = await initializePinecone();
+    const pc = new Pinecone({
+      apiKey: process.env.PINECONE_API_KEY,
+    });
     
-    // Use Pinecone's built-in embedding generation
-    const embedResponse = await index.inference.embed(
-      'multilingual-e5-large',
+    const model = 'multilingual-e5-large';
+    const embeddings = await pc.inference.embed(
+      model,
       [text],
-      { inputType: 'passage' }
+      { inputType: 'passage', truncate: 'END' }
     );
     
-    return embedResponse[0].values;
+    return embeddings[0].values;
   } catch (error) {
     console.error('Error generating embedding:', error);
     throw error;
@@ -61,15 +63,16 @@ async function generateEmbedding(text) {
 }
 
 // Store document in Pinecone
-async function storeDocument(documentId, documentText, metadata = {}) {
+async function storeDocument(documentId, text, metadata = {}) {
   try {
-    const index = await initializePinecone();
-    const chunks = chunkText(documentText);
+    await initializePinecone();
     
+    // Chunk the document
+    const chunks = chunkText(text);
     console.log(`📄 Storing document: ${documentId} (${chunks.length} chunks)`);
     
+    // Generate embeddings and prepare vectors
     const vectors = [];
-    
     for (let i = 0; i < chunks.length; i++) {
       const chunkId = `${documentId}-chunk-${i}`;
       const embedding = await generateEmbedding(chunks[i]);
@@ -78,24 +81,23 @@ async function storeDocument(documentId, documentText, metadata = {}) {
         id: chunkId,
         values: embedding,
         metadata: {
-          text: chunks[i],
+          ...metadata,
           documentId: documentId,
           chunkIndex: i,
-          totalChunks: chunks.length,
-          ...metadata
+          text: chunks[i],
+          totalChunks: chunks.length
         }
       });
     }
     
     // Upsert vectors to Pinecone
-    await index.namespace('default').upsert(vectors);
+    await pineconeIndex.upsert(vectors);
     
-    console.log(`✅ Document stored: ${documentId} (${vectors.length} vectors)`);
-    
+    console.log(`✅ Document stored successfully: ${documentId}`);
     return {
       success: true,
       documentId: documentId,
-      chunksStored: vectors.length
+      chunksStored: chunks.length
     };
   } catch (error) {
     console.error('Error storing document:', error);
@@ -103,30 +105,29 @@ async function storeDocument(documentId, documentText, metadata = {}) {
   }
 }
 
-// Query Pinecone for relevant documents
-async function queryDocuments(queryText, topK = 5) {
+// Query documents from Pinecone
+async function queryDocuments(query, topK = 3) {
   try {
-    const index = await initializePinecone();
+    await initializePinecone();
     
-    // Generate embedding for query
-    const queryEmbedding = await generateEmbedding(queryText);
+    // Generate embedding for the query
+    const queryEmbedding = await generateEmbedding(query);
     
     // Query Pinecone
-    const queryResponse = await index.namespace('default').query({
+    const queryResponse = await pineconeIndex.query({
       vector: queryEmbedding,
       topK: topK,
       includeMetadata: true
     });
     
-    // Extract relevant text chunks
+    // Extract and format results
     const results = queryResponse.matches.map(match => ({
-      text: match.metadata.text,
+      id: match.id,
       score: match.score,
+      text: match.metadata.text,
       documentId: match.metadata.documentId,
-      chunkIndex: match.metadata.chunkIndex
+      filename: match.metadata.filename
     }));
-    
-    console.log(`🔍 Query results: ${results.length} matches found`);
     
     return results;
   } catch (error) {
