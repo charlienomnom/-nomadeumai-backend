@@ -9,17 +9,20 @@ const fsSync = require('fs');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 
+// Import Pinecone integration
+const { storeDocument, getRelevantContext } = require('./pinecone-integration');
+
 const app = express();
 
 // CORS configuration - allows both production and local development
 app.use(cors({
   origin: ['http://localhost:3000', 'http://localhost:3001', 'https://nomadeumai-frontend.vercel.app'],
   credentials: true
-}));
+} ));
 
 app.use(express.json());
 
-// Configure multer for file uploads - FIXED: use synchronous fs for multer callbacks
+// Configure multer for file uploads
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fsSync.existsSync(uploadDir)) {
   fsSync.mkdirSync(uploadDir, { recursive: true });
@@ -62,7 +65,6 @@ function filterConversationHistory(history) {
   try {
     const parsed = JSON.parse(history);
     return parsed.filter(msg => {
-      // Filter out error messages from other AIs
       if (msg.role === 'assistant' && msg.content && typeof msg.content === 'string') {
         const lowerContent = msg.content.toLowerCase();
         if (lowerContent.includes('api error:') || 
@@ -141,16 +143,76 @@ async function processFile(file) {
   }
 }
 
-// Claude endpoint with file support
+// NEW ENDPOINT: Upload document to Pinecone for RAG
+app.post('/api/upload-document', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+    
+    const processedFile = await processFile(req.file);
+    
+    if (!processedFile || processedFile.type !== 'text') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Only text-based files (PDF, Word, TXT) can be uploaded to the knowledge base' 
+      });
+    }
+    
+    const documentId = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    const result = await storeDocument(documentId, processedFile.data, {
+      filename: processedFile.filename,
+      uploadedAt: new Date().toISOString()
+    });
+    
+    res.json({
+      success: true,
+      message: 'Document uploaded to knowledge base successfully',
+      documentId: result.documentId,
+      chunksStored: result.chunksStored,
+      filename: processedFile.filename
+    });
+    
+  } catch (error) {
+    console.error('Error uploading document:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// NEW ENDPOINT: Query RAG context (for testing)
+app.post('/api/query-context', async (req, res) => {
+  try {
+    const { query } = req.body;
+    
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'Query is required' });
+    }
+    
+    const contextResult = await getRelevantContext(query, 3);
+    
+    res.json({
+      success: true,
+      hasContext: contextResult.hasContext,
+      context: contextResult.context,
+      confidence: contextResult.confidence,
+      resultsCount: contextResult.resultsCount
+    });
+    
+  } catch (error) {
+    console.error('Error querying context:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ENHANCED: Claude endpoint with RAG support
 app.post('/api/chat/claude', upload.array('files', 5), async (req, res) => {
   try {
-    const { message, systemPrompt, conversationHistory } = req.body;
+    const { message, systemPrompt, conversationHistory, useRAG } = req.body;
     const files = req.files || [];
     
-    // Process uploaded files
     const processedFiles = await Promise.all(files.map(processFile));
     
-    // Build messages array with filtered conversation history
     const messages = [
       ...filterConversationHistory(conversationHistory).map(msg => ({
         role: msg.role === 'assistant' ? 'assistant' : 'user',
@@ -158,10 +220,8 @@ app.post('/api/chat/claude', upload.array('files', 5), async (req, res) => {
       }))
     ];
     
-    // Build content for current message
     let content = [];
     
-    // Add file content first
     for (const file of processedFiles) {
       if (file) {
         if (file.type === 'image') {
@@ -182,7 +242,26 @@ app.post('/api/chat/claude', upload.array('files', 5), async (req, res) => {
       }
     }
     
-    // Add user message
+    let ragContext = null;
+    if (useRAG !== 'false' && useRAG !== false) {
+      try {
+        const contextResult = await getRelevantContext(message, 3);
+        if (contextResult.hasContext && contextResult.confidence > 0.5) {
+          ragContext = contextResult.context;
+          console.log(`🧠 RAG context added (confidence: ${(contextResult.confidence * 100).toFixed(1)}%)`);
+        }
+      } catch (ragError) {
+        console.error('RAG error (continuing without context):', ragError);
+      }
+    }
+    
+    if (ragContext) {
+      content.push({
+        type: 'text',
+        text: `[Relevant information from knowledge base]\n\n${ragContext}\n\n[End of knowledge base context]`
+      });
+    }
+    
     content.push({
       type: 'text',
       text: message
@@ -192,28 +271,31 @@ app.post('/api/chat/claude', upload.array('files', 5), async (req, res) => {
     
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096, // INCREASED from 1024 to prevent truncation
+      max_tokens: 4096,
       system: systemPrompt || '',
       messages: messages,
     });
 
-    res.json({ success: true, response: response.content[0].text, ai: 'claude' });
+    res.json({ 
+      success: true, 
+      response: response.content[0].text, 
+      ai: 'claude',
+      ragUsed: ragContext !== null
+    });
   } catch (error) {
     console.error('Claude error:', error);
     res.status(500).json({ success: false, error: error.message, ai: 'claude' });
   }
 });
 
-// Grok endpoint with file support
+// Grok endpoint
 app.post('/api/chat/grok', upload.array('files', 5), async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
     const files = req.files || [];
     
-    // Process uploaded files
     const processedFiles = await Promise.all(files.map(processFile));
     
-    // FIX: Check if user uploaded images (Grok can't handle them)
     const hasImages = processedFiles.some(file => file && file.type === 'image');
     if (hasImages) {
       return res.json({ 
@@ -231,7 +313,6 @@ app.post('/api/chat/grok', upload.array('files', 5), async (req, res) => {
       }))
     ];
     
-    // Build message with file content (text only)
     let userMessage = '';
     for (const file of processedFiles) {
       if (file && file.type === 'text') {
@@ -242,9 +323,8 @@ app.post('/api/chat/grok', upload.array('files', 5), async (req, res) => {
     
     messages.push({ role: 'user', content: userMessage });
 
-    // Add timeout handling
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeout = setTimeout(() => controller.abort(), 60000);
 
     try {
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -256,14 +336,13 @@ app.post('/api/chat/grok', upload.array('files', 5), async (req, res) => {
         body: JSON.stringify({
           model: 'grok-3',
           messages: messages,
-        }),
+        } ),
         signal: controller.signal
       });
 
       clearTimeout(timeout);
 
       const data = await response.json();
-      console.log('Grok API response:', JSON.stringify(data));
 
       if (data.choices && data.choices[0] && data.choices[0].message) {
         res.json({ success: true, response: data.choices[0].message.content, ai: 'grok' });
@@ -286,13 +365,12 @@ app.post('/api/chat/grok', upload.array('files', 5), async (req, res) => {
   }
 });
 
-// Gemini endpoint with file support
+// Gemini endpoint
 app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
   try {
     const { message, systemPrompt, conversationHistory } = req.body;
     const files = req.files || [];
     
-    // Process uploaded files
     const processedFiles = await Promise.all(files.map(processFile));
     
     const contents = [
@@ -302,7 +380,6 @@ app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
       }))
     ];
     
-    // Build parts for current message
     let parts = [];
     for (const file of processedFiles) {
       if (file && file.type === 'text') {
@@ -316,28 +393,24 @@ app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
       role: 'user'
     });
 
-    // Add timeout handling
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeout = setTimeout(() => controller.abort(), 60000);
 
     try {
-      // FIXED: Changed from gemini-2.5-flash to gemini-1.5-flash (correct model name)
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
-?key=${process.env.GEMINI_API_KEY}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           contents: contents,
-        }),
+        } ),
         signal: controller.signal
       });
 
       clearTimeout(timeout);
 
       const data = await response.json();
-      console.log('Gemini API response:', JSON.stringify(data));
 
       if (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) {
         res.json({ success: true, response: data.candidates[0].content.parts[0].text, ai: 'gemini' });
@@ -363,4 +436,5 @@ app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`🧠 RAG enabled with Pinecone vector database`);
 });
