@@ -42,9 +42,12 @@ const upload = multer({
   storage: storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|pdf|doc|docx|txt/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const allowedExtensions = /jpeg|jpg|png|gif|pdf|doc|docx|txt/;
+    const extname = allowedExtensions.test(path.extname(file.originalname).toLowerCase());
+    
+    // More permissive mimetype check - allow text files
+    const allowedMimetypes = /image\/|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|text\//;
+    const mimetype = allowedMimetypes.test(file.mimetype);
     
     if (mimetype && extname) {
       return cb(null, true);
