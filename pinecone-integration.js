@@ -41,21 +41,35 @@ function chunkText(text, maxChunkSize = 400) {
   return chunks;
 }
 
-// Generate embeddings using Pinecone's inference API
+// Generate embeddings using Pinecone's REST API
 async function generateEmbedding(text) {
   try {
-    const pc = new Pinecone({
-      apiKey: process.env.PINECONE_API_KEY,
+    const response = await fetch('https://api.pinecone.io/embed', {
+      method: 'POST',
+      headers: {
+        'Api-Key': process.env.PINECONE_API_KEY,
+        'Content-Type': 'application/json',
+        'X-Pinecone-Api-Version': '2025-10'
+      },
+      body: JSON.stringify({
+        model: 'multilingual-e5-large',
+        parameters: {
+          input_type: 'passage',
+          truncate: 'END'
+        },
+        inputs: [
+          { text: text }
+        ]
+      } )
     });
     
-    const model = 'multilingual-e5-large';
-    const embeddings = await pc.inference.embed(
-      model,
-      [text],
-      { inputType: 'passage', truncate: 'END' }
-    );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Pinecone API error: ${response.status} - ${errorText}`);
+    }
     
-    return embeddings[0].values;
+    const data = await response.json();
+    return data.data[0].values;
   } catch (error) {
     console.error('Error generating embedding:', error);
     throw error;
@@ -110,8 +124,33 @@ async function queryDocuments(query, topK = 3) {
   try {
     await initializePinecone();
     
-    // Generate embedding for the query
-    const queryEmbedding = await generateEmbedding(query);
+    // Generate embedding for the query (use 'query' input type instead of 'passage')
+    const response = await fetch('https://api.pinecone.io/embed', {
+      method: 'POST',
+      headers: {
+        'Api-Key': process.env.PINECONE_API_KEY,
+        'Content-Type': 'application/json',
+        'X-Pinecone-Api-Version': '2025-10'
+      },
+      body: JSON.stringify({
+        model: 'multilingual-e5-large',
+        parameters: {
+          input_type: 'query',
+          truncate: 'END'
+        },
+        inputs: [
+          { text: query }
+        ]
+      } )
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Pinecone API error: ${response.status} - ${errorText}`);
+    }
+    
+    const data = await response.json();
+    const queryEmbedding = data.data[0].values;
     
     // Query Pinecone
     const queryResponse = await pineconeIndex.query({
