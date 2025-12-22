@@ -471,7 +471,7 @@ app.get('/api/test-keys', async (req, res) => {
           { role: 'system', content: 'You are Grok.' },
           { role: 'user', content: 'Say only your name' }
         ],
-        model: 'grok-beta',
+        model: 'grok-3',
         temperature: 0.7
       } )
     });
