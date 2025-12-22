@@ -435,6 +435,132 @@ app.post('/api/chat/gemini', upload.array('files', 5), async (req, res) => {
     res.json({ success: true, response: `Gemini error: ${error.message}`, ai: 'gemini' });
   }
 });
+// API Key Test Endpoint
+app.get('/api/test-keys', async (req, res) => {
+  const results = {
+    claude: { tested: false, working: false, response: '' },
+    grok: { tested: false, working: false, response: '' },
+    gemini: { tested: false, working: false, response: '' }
+  };
+
+  // Test Claude
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 50,
+      messages: [{ role: 'user', content: 'Say only your name' }],
+    });
+    results.claude.tested = true;
+    results.claude.working = true;
+    results.claude.response = response.content[0].text;
+  } catch (error) {
+    results.claude.tested = true;
+    results.claude.response = error.message;
+  }
+
+  // Test Grok
+  try {
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'You are Grok.' },
+          { role: 'user', content: 'Say only your name' }
+        ],
+        model: 'grok-beta',
+        temperature: 0.7
+      } )
+    });
+    const data = await response.json();
+    results.grok.tested = true;
+    if (data.choices && data.choices[0]) {
+      results.grok.working = true;
+      results.grok.response = data.choices[0].message.content;
+    } else {
+      results.grok.response = JSON.stringify(data);
+    }
+  } catch (error) {
+    results.grok.tested = true;
+    results.grok.response = error.message;
+  }
+
+  // Test Gemini
+  try {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: 'Say only your name' }],
+          role: 'user'
+        }]
+      } )
+    });
+    const data = await response.json();
+    results.gemini.tested = true;
+    if (data.candidates && data.candidates[0]) {
+      results.gemini.working = true;
+      results.gemini.response = data.candidates[0].content.parts[0].text;
+    } else {
+      results.gemini.response = JSON.stringify(data);
+    }
+  } catch (error) {
+    results.gemini.tested = true;
+    results.gemini.response = error.message;
+  }
+
+  // Return HTML results
+  res.send(\`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>API Key Test Results</title>
+      <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a1a; color: #fff; }
+        .result { margin: 20px 0; padding: 15px; border-radius: 8px; }
+        .working { background: #1a4d2e; border: 2px solid #4ade80; }
+        .failed { background: #4d1a1a; border: 2px solid #ef4444; }
+        h1 { color: #00ffff; }
+        h2 { margin: 0; }
+        pre { background: #000; padding: 10px; border-radius: 4px; overflow-x: auto; }
+      </style>
+    </head>
+    <body>
+      <h1>🧪 API Key Test Results</h1>
+      
+      <div class="result \${results.claude.working ? 'working' : 'failed'}">
+        <h2>\${results.claude.working ? '✅' : '❌'} Claude API</h2>
+        <p><strong>Status:</strong> \${results.claude.working ? 'WORKING' : 'FAILED'}</p>
+        <p><strong>Response:</strong></p>
+        <pre>\${results.claude.response}</pre>
+      </div>
+
+      <div class="result \${results.grok.working ? 'working' : 'failed'}">
+        <h2>\${results.grok.working ? '✅' : '❌'} Grok API</h2>
+        <p><strong>Status:</strong> \${results.grok.working ? 'WORKING' : 'FAILED'}</p>
+        <p><strong>Response:</strong></p>
+        <pre>\${results.grok.response}</pre>
+      </div>
+
+      <div class="result \${results.gemini.working ? 'working' : 'failed'}">
+        <h2>\${results.gemini.working ? '✅' : '❌'} Gemini API</h2>
+        <p><strong>Status:</strong> \${results.gemini.working ? 'WORKING' : 'FAILED'}</p>
+        <p><strong>Response:</strong></p>
+        <pre>\${results.gemini.response}</pre>
+      </div>
+
+      <hr>
+      <p><strong>Summary:</strong> \${results.claude.working && results.grok.working && results.gemini.working ? '✅ All APIs working!' : '⚠️ Some APIs are failing - check above for details'}</p>
+    </body>
+    </html>
+  \`);
+});
 
 const PORT = process.env.PORT || 8000;
 app.listen(PORT, '0.0.0.0', () => {
